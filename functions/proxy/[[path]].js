@@ -27,7 +27,38 @@ const MEDIA_CONTENT_TYPES = ['video/', 'audio/', 'image/'];
 export async function onRequest(context) {
     const { request, env, next, waitUntil } = context; // next 和 waitUntil 可能需要
     const url = new URL(request.url);
+    // ====== 【新增】图片与豆瓣海报免密放行逻辑 ======
+    const isImageRequest = /doubanio\.com|\.(jpe?g|png|webp|gif|bmp|svg|avif)/i.test(request.url);
+    if (isImageRequest) {
+        let targetImageUrl = url.pathname.replace(/^\/proxy\//, '');
+        try {
+            targetImageUrl = decodeURIComponent(targetImageUrl);
+        } catch (e) {}
 
+        if (targetImageUrl.startsWith('http')) {
+            const imgHeaders = new Headers({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                // 自动伪造豆瓣 Referer 避开 418 防盗链
+                'Referer': targetImageUrl.includes('doubanio.com') ? 'https://movie.douban.com/' : ''
+            });
+
+            try {
+                const imgRes = await fetch(targetImageUrl, { headers: imgHeaders });
+                const resHeaders = new Headers(imgRes.headers);
+                resHeaders.set('Access-Control-Allow-Origin', '*');
+                resHeaders.set('Cache-Control', 'public, max-age=86400');
+
+                // 直接使用二进制流返回，避免原代码的 text() 破坏图片文件
+                return new Response(imgRes.body, {
+                    status: imgRes.status,
+                    headers: resHeaders
+                });
+            } catch (err) {
+                console.error('图片代理拉取失败:', err);
+            }
+        }
+    }
+    // =============================================
     // 验证鉴权（主函数调用）
     const isValidAuth = await validateAuth(request, env);
     if (!isValidAuth) {
